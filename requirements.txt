@@ -1,0 +1,6 @@
+datasets==2.15.0
+einops-exts==0.0.4
+einops==0.7.0
+imagen_pytorch==1.25.11
+transformers==4.35.2
+wandb==0.16.0
