@@ -26,7 +26,7 @@ model_save_dir = "cifar_checkpoints"
 if not os.path.exists(model_save_dir):
     os.mkdir(model_save_dir)
 
-wandb.login()
+wandb.login(key=os.environ["WANDB_API_KEY"])
 
 
 def get_text_embeddings(name, labels, max_length=256):
