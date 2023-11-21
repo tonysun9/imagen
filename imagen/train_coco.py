@@ -1,16 +1,14 @@
 import numpy as np
 import random
-from datasets import load_dataset
 import torch
 from imagen_pytorch import Unet, Imagen, ImagenTrainer
 from torch.utils.data import Dataset
-from torchvision import transforms
-from transformers import T5Tokenizer, T5EncoderModel
-from einops import rearrange
 import os
 import wandb
 
 from typing import Optional, Callable, Any, List, Tuple
+
+from .dataset_coco import prepare_data_loaders
 
 WANDB_PROJECT_NAME = "imagen"
 EXPERIMENT_NAME = "coco-test-1"
@@ -18,9 +16,26 @@ TAGS = ["coco", "imagen", "original"]
 
 MODEL_SAVE_DIR = "coco_checkpoints/"
 
-TEXT_ENCODER = "google/t5-v1_1-base"
-
 SEED = 0
+
+HYPERPARAMS = {
+    "steps": 200_000,  # Total number of training steps (iterations) to run.
+    "dim": 128,  # Base dimensionality of the model, often related to the complexity and capacity of the model.
+    "cond_dim": 128,  # Dimensionality of the conditional input, e.g., for conditional GANs or conditional image generation.
+    "dim_mults": (
+        1,
+        2,
+        4,
+    ),  # Multipliers for the dimensions at different stages in the network, controlling the depth and width of the model.
+    "image_sizes": 256,  # The size (height and width) of the images that the model will process and generate.
+    "timesteps": 250,
+    "cond_drop_prob": 0.1,  # Dropout probability for the conditional inputs, used for regularization.
+    "batch_size": 64,
+    "lr": 1e-4,
+    "num_resnet_blocks": 3,
+    "model_save_dir": MODEL_SAVE_DIR,
+    "dynamic_thresholding": True,
+}
 
 torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
@@ -34,68 +49,6 @@ if not os.path.exists(MODEL_SAVE_DIR):
     os.mkdir(MODEL_SAVE_DIR)
 
 wandb.login(key=os.environ["WANDB_API_KEY"])
-
-
-def get_text_embeddings(
-    name: str, labels: list[str], max_length: int = 256
-) -> torch.Tensor:
-    """
-    Generates or loads text embeddings for a given list of labels using the T5 model.
-
-    This function checks if the embeddings are already saved in a file with the given name.
-    If not, it loads the T5 model and tokenizer, processes the labels to generate embeddings,
-    and saves these embeddings to the specified file.
-
-    Args:
-    name (str): The file name where the embeddings are saved or will be saved.
-    labels (List[str]): A list of labels for which embeddings are to be generated.
-    max_length (int, optional): The maximum sequence length for the T5 tokenizer. Default is 256.
-
-    Returns:
-    torch.Tensor: A tensor containing the generated embeddings.
-    """
-
-    if os.path.isfile(name):
-        return torch.load(name)
-
-    tokenizer = T5Tokenizer.from_pretrained(TEXT_ENCODER, model_max_length=max_length)
-
-    model = T5EncoderModel.from_pretrained(TEXT_ENCODER)
-    model.eval()
-
-    def photo_prefix(noun: str) -> str:
-        """Adds a prefix to a noun to create a phrase."""
-        if noun[0] in ["a", "e", "i", "o", "u"]:
-            return "a photo of an " + noun
-        return "a photo of a " + noun
-
-    texts = [photo_prefix(x) for x in labels]
-
-    encoded = tokenizer.batch_encode_plus(
-        texts,
-        return_tensors="pt",
-        padding="longest",
-        max_length=max_length,
-        truncation=True,
-    )
-
-    with torch.no_grad():
-        output = model(
-            input_ids=encoded.input_ids, attention_mask=encoded.attention_mask
-        )
-        encoded_text = output.last_hidden_state.detach()
-
-    attn_mask = encoded.attention_mask.bool()
-
-    # Mask the encoded text where attention mask is false
-    # encoded_text = encoded_text.masked_fill(
-    #     ~torch.einsum("... -> ... 1", attn_mask), 0.0
-    # )
-    encoded_text = encoded_text.masked_fill(~rearrange(attn_mask, "... -> ... 1"), 0.0)
-
-    torch.save(encoded_text, name)
-
-    return encoded_text
 
 
 class HFDataset(Dataset):
@@ -178,10 +131,6 @@ def make(config: Any) -> Tuple[Any, torch.Tensor, List[str]]:
         Tuple[Any, torch.Tensor, List[str]]: A tuple containing the initialized Imagen trainer, text embeddings,
                                              and a list of label names from the CIFAR-10 dataset.
     """
-    cfar = load_dataset("cifar10")
-    labels = cfar["train"].features["label"].names
-    text_embeddings = get_text_embeddings("cifar10-embeddings.pkl", labels)
-
     unet = Unet(
         dim=config.dim,  # the "Z" layer dimension, i.e. the number of filters the outputs to the first layer
         cond_dim=config.cond_dim,
@@ -201,31 +150,16 @@ def make(config: Any) -> Tuple[Any, torch.Tensor, List[str]]:
 
     trainer = ImagenTrainer(imagen, lr=config.lr)
 
-    transform = transforms.Compose(
-        [
-            transforms.CenterCrop(32),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),  # ImageNet mean and std dev
-        ]
-    )
+    train_dl, valid_dl = prepare_data_loaders()
+    trainer.add_train_dataloader(train_dl)
+    trainer.add_valid_dataloader(valid_dl)
 
-    ds = HFDataset(cfar["train"], text_embeddings, transform=transform)
-    tst_ds = HFDataset(cfar["test"], text_embeddings, transform=transform)
-
-    trainer.add_train_dataset(ds, batch_size=config.batch_size)
-    trainer.add_valid_dataset(tst_ds, batch_size=config.batch_size)
-
-    return trainer, text_embeddings, labels
+    return trainer
 
 
 def train(
     trainer,
-    text_embeddings,
-    labels,
     config,
-    sample_factor=None,
     validate_every=None,
     save_every=None,
 ):
@@ -259,13 +193,20 @@ def train(
     """
     assert config.model_save_dir[-1] == "/"
 
-    sample_every = 10
+    def next_sample_step(current_step):
+        if current_step < 10:
+            return current_step + 1
+        else:
+            return int(current_step * 3)
+
+    sample_step = 0
 
     for i in range(config.steps):
         loss = trainer.train_step(max_batch_size=config.batch_size)
 
         wandb.log({"train_loss": loss}, step=i)
 
+        # TODO: add validation loss (can do every sampling step)
         if validate_every is not None and i % validate_every == 0:
             avg_loss = 0
             for _ in range(100):
@@ -275,17 +216,22 @@ def train(
                 avg_loss += valid_loss
             wandb.log({"valid loss": avg_loss}, step=i)
 
-        if sample_factor is not None and i % sample_every == 0:
-            images = trainer.sample(
-                text_embeds=text_embeddings,
-                batch_size=config.batch_size,
-                return_pil_images=True,
-            )
-            samples = []
-            for j, img in enumerate(images):
-                samples.append(wandb.Image(img, caption=labels[j]))
+        if i == sample_step:
+            # Sample a batch from the DataLoader
+            sample_batch = next(iter(trainer.train_dataloader))
+            (
+                sample_images,
+                _,
+            ) = sample_batch  # Assuming each batch is a tuple (images, embeddings)
+
+            # Generate samples using the model
+            generated_images = trainer.sample(sample_images)
+
+            # Log the generated images
+            samples = [wandb.Image(img) for img in generated_images]
             wandb.log({"samples": samples}, step=i)
-            sample_every = int(sample_every * sample_factor)
+
+            sample_step = next_sample_step(i)
 
         if save_every is not None and i != 0 and i % save_every == 0:
             trainer.save(f"{config.model_save_dir}{wandb.run.name}-{i}.ckpt")
@@ -293,28 +239,6 @@ def train(
     # final save at the end if we did not already save this round
     if save_every is not None and i % save_every != 0:
         trainer.save(f"{config.model_save_dir}{wandb.run.name}-{i}.ckpt")
-
-
-hyperparams = {
-    "steps": 200_000,  # Total number of training steps (iterations) to run.
-    "dim": 128,  # Base dimensionality of the model, often related to the complexity and capacity of the model.
-    "cond_dim": 128,  # Dimensionality of the conditional input, e.g., for conditional GANs or conditional image generation.
-    "dim_mults": (
-        1,
-        2,
-        4,
-    ),  # Multipliers for the dimensions at different stages in the network, controlling the depth and width of the model.
-    "image_sizes": 32,  # The size (height and width) of the images that the model will process and generate.
-    "timesteps": 250,
-    "cond_drop_prob": 0.1,  # Dropout probability for the conditional inputs, used for regularization.
-    "batch_size": 64,
-    "lr": 1e-4,
-    "num_resnet_blocks": 3,
-    "model_save_dir": MODEL_SAVE_DIR,
-    "dynamic_thresholding": True,
-}
-
-config = wandb.config
 
 
 def build(hyperparams: dict) -> Any:
@@ -344,14 +268,11 @@ def build(hyperparams: dict) -> Any:
     ):
         config = wandb.config  # hyperparams
 
-        trainer, embeddings, labels = make(config)
+        trainer = make(config)
 
         train(
             trainer,
-            embeddings,
-            labels,
             config,
-            sample_factor=1.3,
             validate_every=None,
             save_every=10_000,
         )
@@ -359,4 +280,4 @@ def build(hyperparams: dict) -> Any:
         return trainer
 
 
-trainer = build(hyperparams)
+trainer = build(HYPERPARAMS)
