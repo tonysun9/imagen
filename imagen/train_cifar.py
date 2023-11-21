@@ -22,7 +22,7 @@ torch.backends.cudnn.deterministic = True
 
 # We will be saving checkpoints to our google drive so we can download them
 # later
-model_save_dir = "checkpoints"
+model_save_dir = "cifar_checkpoints"
 if not os.path.exists(model_save_dir):
     os.mkdir(model_save_dir)
 
