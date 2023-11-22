@@ -14,6 +14,8 @@ PATH_TO_IMAGE_FOLDER = "COCO2017"
 
 BATCH_SIZE = 64
 
+EMBEDDING_FNAME = "coco_caption_embeddings.pkl"
+
 
 def create_full_path(image):
     """Create full path to image using `base_path` to COCO2017 folder."""
@@ -118,7 +120,7 @@ def prepare_data():
 
     # Extract captions and generate embeddings
     all_captions = [pair["caption"] for pair in train_image_caption_pairs]
-    all_embeddings = generate_text_embeddings("embeddings_file_name.pkl", all_captions)
+    all_embeddings = generate_text_embeddings(EMBEDDING_FNAME, all_captions)
 
     # Add embeddings to the pairs
     for pair, embedding in zip(train_image_caption_pairs, all_embeddings):

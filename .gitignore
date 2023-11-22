@@ -162,3 +162,7 @@ cython_debug/
 *.ipynb
 *.zip
 COCO2017/
+
+runs/
+*checkpoints/
+wandb/
