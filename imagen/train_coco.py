@@ -8,10 +8,10 @@ import wandb
 
 from typing import Optional, Callable, Any, List, Tuple
 
-from .dataset_coco import prepare_data_loaders
+from .dataset_coco import prepare_data
 
 WANDB_PROJECT_NAME = "imagen"
-EXPERIMENT_NAME = "coco-test-1"
+EXPERIMENT_NAME = "coco-test-3"
 TAGS = ["coco", "imagen", "original"]
 
 MODEL_SAVE_DIR = "coco_checkpoints/"
@@ -150,9 +150,12 @@ def make(config: Any) -> Tuple[Any, torch.Tensor, List[str]]:
 
     trainer = ImagenTrainer(imagen, lr=config.lr)
 
-    train_dl, valid_dl = prepare_data_loaders()
-    trainer.add_train_dataloader(train_dl)
-    trainer.add_valid_dataloader(valid_dl)
+    train_dataset, valid_dataset = prepare_data()
+    trainer.add_train_dataset(train_dataset, batch_size=config.batch_size)
+    trainer.add_valid_dataset(valid_dataset, batch_size=config.batch_size)
+    # train_dl, valid_dl = prepare_data()
+    # trainer.add_train_dataloader(train_dl)
+    # trainer.add_valid_dataloader(valid_dl)
 
     return trainer
 

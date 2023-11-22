@@ -106,7 +106,7 @@ class CustomCocoDataset(Dataset):
         return image, embedding
 
 
-def prepare_data_loaders():
+def prepare_data():
     # Load and preprocess the COCO dataset
     coco_dataset = load_dataset("phiyodr/coco2017")
     coco_dataset = coco_dataset.map(create_full_path)
@@ -138,8 +138,10 @@ def prepare_data_loaders():
     train_dataset = CustomCocoDataset(train_image_caption_pairs, transform=transform)
     valid_dataset = CustomCocoDataset(valid_image_caption_pairs, transform=transform)
 
-    # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE)
+    return train_dataset, valid_dataset
 
-    return train_loader, valid_loader
+    # Create DataLoaders
+    # train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    # valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE)
+
+    # return train_loader, valid_loader
