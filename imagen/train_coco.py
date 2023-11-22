@@ -8,7 +8,7 @@ import wandb
 
 from typing import Optional, Callable, Any, List, Tuple
 
-from .dataset_coco import prepare_data
+from dataset_coco import prepare_data
 
 WANDB_PROJECT_NAME = "imagen"
 EXPERIMENT_NAME = "coco-test-3"
