@@ -80,7 +80,7 @@ def generate_batch_embeddings(batch, max_length: int = 128):
 
     attn_mask = attention_mask.to("cpu").bool()
     encoded_text = encoded_text.masked_fill(~rearrange(attn_mask, "... -> ... 1"), 0.0)
-    return {"embedding": encoded_text}
+    return {"embedding": torch.Tensor(encoded_text)}
 
 
 def prepare_dataset():
