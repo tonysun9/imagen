@@ -6,13 +6,14 @@ from einops import rearrange
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 from PIL import Image
+import pickle
 from torchvision import transforms
 
 
 TEXT_ENCODER = "google/t5-v1_1-base"
 HF_DATASET = "nlphuji/flickr30k"
 
-EMBEDDING_FNAME = "coco_caption_embeddings.pkl"
+DATASET_FNAME = "imagen_flickr_dataset.pkl"
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,7 +36,7 @@ class HFDataset(Dataset):
 
     def __getitem__(self, idx):
         sample = self.data[idx]
-        img = sample["img"]
+        img = sample["image"]
         caption_embedding = sample["embedding"]
 
         if self.transform is not None:
@@ -54,13 +55,13 @@ def flatten_captions(batch):
     return flat_list
 
 
-def generate_batch_embeddings(batch, max_length):
+def generate_batch_embeddings(batch, max_length: int = 128):
     """Generate embeddings for a batch of captions."""
     # Tokenize the captions in the current batch
     encoded = tokenizer.batch_encode_plus(
         batch["caption"],
         return_tensors="pt",
-        padding="longest",
+        padding="max_length",
         max_length=max_length,
         truncation=True,
     )
@@ -78,25 +79,33 @@ def generate_batch_embeddings(batch, max_length):
     encoded_text = encoded_text.to("cpu")
 
     attn_mask = attention_mask.to("cpu").bool()
-    encoded_text = encoded_text.masked_fill(~attn_mask.unsqueeze(-1), 0.0)
-
-    return {"embedding": encoded_text.tolist()}
+    encoded_text = encoded_text.masked_fill(~rearrange(attn_mask, "... -> ... 1"), 0.0)
+    return {"embedding": encoded_text}
 
 
 def prepare_dataset():
-    flickr_ds = load_dataset(HF_DATASET)
+    """Prepare the Flickr30k dataset for training."""
+    if os.path.exists(DATASET_FNAME):
+        with open(DATASET_FNAME, "rb") as file:
+            flickr_ds = pickle.load(file)
 
-    flickr_ds = flickr_ds.map(
-        flatten_captions,
-        batched=True,
-        remove_columns=["sentids", "split", "img_id", "filename"],
-    )
+    else:
+        flickr_ds = load_dataset(HF_DATASET)
 
-    flickr_ds = flickr_ds.map(
-        lambda batch: generate_batch_embeddings(batch, max_length=256),
-        batched=True,
-        batch_size=16,
-    )
+        flickr_ds = flickr_ds.map(
+            flatten_captions,
+            batched=True,
+            remove_columns=["sentids", "split", "img_id", "filename"],
+        )
+
+        flickr_ds = flickr_ds.map(
+            lambda batch: generate_batch_embeddings(batch, max_length=128),
+            batched=True,
+            batch_size=16,
+        )
+
+        with open(DATASET_FNAME, "wb") as file:
+            pickle.dump(flickr_ds, file)
 
     # Create dataset instances
     transform = transforms.Compose(
@@ -110,4 +119,4 @@ def prepare_dataset():
         ]
     )
 
-    return HFDataset(dataset=flickr_ds["test"], transform=transform)
+    return HFDataset(hf_dataset=flickr_ds["test"], transform=transform)
