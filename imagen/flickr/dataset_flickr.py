@@ -13,7 +13,7 @@ from torchvision import transforms
 TEXT_ENCODER = "google/t5-v1_1-base"
 HF_DATASET = "nlphuji/flickr30k"
 
-DATASET_FNAME = "imagen_flickr_dataset.pkl"
+DATASET_FNAME = "imagen_flickr_dataset.hf"
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -86,8 +86,7 @@ def generate_batch_embeddings(batch, max_length: int = 128):
 def prepare_dataset():
     """Prepare the Flickr30k dataset for training."""
     if os.path.exists(DATASET_FNAME):
-        with open(DATASET_FNAME, "rb") as file:
-            flickr_ds = pickle.load(file)
+        flickr_ds = load_dataset(DATASET_FNAME)
 
     else:
         flickr_ds = load_dataset(HF_DATASET)
@@ -104,8 +103,7 @@ def prepare_dataset():
             batch_size=16,
         )
 
-        with open(DATASET_FNAME, "wb") as file:
-            pickle.dump(flickr_ds, file)
+        flickr_ds.save_to_disk(DATASET_FNAME)
 
     # Create dataset instances
     transform = transforms.Compose(
