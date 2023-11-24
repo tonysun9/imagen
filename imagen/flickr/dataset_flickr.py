@@ -86,7 +86,7 @@ def generate_batch_embeddings(batch, max_length: int = 128):
 def prepare_dataset():
     """Prepare the Flickr30k dataset for training."""
     if os.path.exists(DATASET_FNAME):
-        flickr_ds = load_dataset(DATASET_FNAME)
+        flickr_ds = load_from_disk(DATASET_FNAME)
 
     else:
         flickr_ds = load_dataset(HF_DATASET)
