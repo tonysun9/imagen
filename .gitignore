@@ -166,3 +166,5 @@ COCO2017/
 runs/
 *checkpoints/
 wandb/
+
+_test*/
