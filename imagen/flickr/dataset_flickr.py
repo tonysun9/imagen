@@ -1,6 +1,6 @@
 import os
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from transformers import T5Tokenizer, T5EncoderModel
 from einops import rearrange
 from torch.utils.data import DataLoader
@@ -55,7 +55,7 @@ def flatten_captions(batch):
     return flat_list
 
 
-def generate_batch_embeddings(batch, max_length: int = 128):
+def generate_batch_embeddings(batch, max_length: int = 64):
     """Generate embeddings for a batch of captions."""
     # Tokenize the captions in the current batch
     encoded = tokenizer.batch_encode_plus(
@@ -98,7 +98,7 @@ def prepare_dataset():
         )
 
         flickr_ds = flickr_ds.map(
-            lambda batch: generate_batch_embeddings(batch, max_length=128),
+            lambda batch: generate_batch_embeddings(batch, max_length=64),
             batched=True,
             batch_size=16,
         )
